@@ -4,9 +4,9 @@ import os
 def ParseCommandLine():
     parser = argparse.ArgumentParser('sqlite join')
 
-    parser.add_argument('-p', '--path', type=ValidateDirectory, require=True, help="Specify the directory where the sqlite db file exists")
+    parser.add_argument('-p', '--path', type=ValidateDirectory, required=True, help="Specify the directory where the sqlite db file exists")
 
-    parser.add_argument('-o', '--output', type=ValidateDirectory, require=True, help="Specify the output directory")
+    parser.add_argument('-o', '--output', type=ValidateDirectory, required=True, help="Specify the output directory")
 
     gl_args = parser.parse_args()
 
