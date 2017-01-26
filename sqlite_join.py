@@ -21,17 +21,19 @@ class sqlite_join():
         self.listOfDBFiles.extend(glob.glob(self.path + "*.sqlite"))
 
         self.table_lists = []
+        self.table_info = dict()
         self.fieldnames = dict()
 
     def set_sqlite(self):
         self.sqlname = self.output + "result.db"
         self.con = sqlite3.connect(self.sqlname)
-        self.con.text_factory = str()
+        #self.con.text_factory = str()
 
     def join_operation(self):
         for db in self.listOfDBFiles: # 한 src DB에 대한 작업 수행하는 영역
             try:
                 self.conn = sqlite3.connect(db)
+                #self.conn.text_factory = str()
                 self.table_list(db) # 하나의 DB에 대해 테이블 목록과 필드명을 얻어옴
                 # 그러면 그 테이블에 대해서 정보를 비교해야 겠군, result.db랑!
                 self.check_table()
@@ -44,7 +46,7 @@ class sqlite_join():
     def check_table(self):
         try:
             cursor = self.con.cursor() # base DB의 정보를 가져와서 비교를 해야 하므로!
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
             baseDBTables = list(map(lambda x: x[0], cursor.fetchall())) # base DB의 테이블 목록, 이 목록과 비교해야 한다.
             same = list(set(baseDBTables) & set(self.table_lists)) # 테이블 명이 같은 목록
             #different = list(set(baseDBTables) - set(self.table_lists)) # 테이블 명이 다른 목록
@@ -60,7 +62,8 @@ class sqlite_join():
                 self.con.rollback()
 
         finally:
-            pass
+            if cursor:
+                cursor.close()
 
 
     def copy_table(self, tablelist):
@@ -68,30 +71,42 @@ class sqlite_join():
         for table in tablelist:
             src = self.conn.execute('SELECT * FROM %s' % table)
             ins = None
-            dst = self.con.cursor()
+            #dst = self.con.cursor()
             for row in src.fetchall():
+                self.debug("row", row)
                 if not ins:
-                    cols = tuple([k for k in self.fieldnames[table]])
+                    cols = tuple([k.keys() for k in self.table_info[table]])
+                    self.debug("cols", cols)
+                    sql = 'CREATE TABLE ' + table + str(cols) # 테이블 만들어 줘야 하는데, 자료형이 없네? ㅋ
+                    self.con.execute(sql)
                     ins = 'INSERT INTO %s %s VALUES (%s)' % (table, cols, ','.join(['?'] * len(cols)))
                     self.debug("ins", ins)
 
-
+                c = row
+                self.con.execute(ins, c)
+            self.con.commit()
 
     def table_list(self, db):
         try:
-            dbname = db
+            #dbname = db
             #self.conn = sqlite3.connect(dbname)
             cursor = self.conn.cursor()
             # DB 내에서 테이블의 목록을 전부 가져온다.
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
             self.table_lists += list(map(lambda x: x[0], cursor.fetchall()))
             # 각각 테이블에서 필드명을 가져온다.
             for table in self.table_lists:
-                cursor.execute("SELECT * FROM " + table)
-                self.fieldnames[table] = list(map(lambda x: x[0], cursor.description))
+                result = cursor.execute("PRAGMA table_info('%s')" % table).fetchall()
+
+                self.table_info[table] = list(map(lambda x, y: {x[1]:y[2]}, result, result))
+                self.fieldnames[table] = list(map(lambda x: x.keys()[0], self.table_info[table]))
+
+                #cursor.execute("SELECT * FROM " + table)
+                #self.fieldnames[table] = list(map(lambda x: x[0],  cursor.description))
                 #self.table_data = cursor.fetchone()
                 #self.debug("table_data", self.table_data)
-                print table, self.fieldnames
+                #self.debug("table", table)
+                #self.debug("fieldnames", self.fieldnames)
 
         except sqlite3.Error as e:
             if self.conn:
