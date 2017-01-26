@@ -15,10 +15,10 @@ class sqlite_join():
     def __init__(self, path, output):
         self.path = os.path.abspath(path) + "\\"
         self.output = os.path.abspath(output) + "\\"
-        #self.listOfDBFiles = glob.glob(self.path + "*") # 이거는 확장자가 없으므로 불확실한 것임!
+        # self.listOfDBFiles = glob.glob(self.path + "*")
+        # 이거는 확장자가 없으므로 불확실한 것임!
         self.listOfDBFiles = glob.glob(self.path + "*.db")
         self.listOfDBFiles.extend(glob.glob(self.path + "*.sqlite"))
-
 
     def set_sqlite(self):
         self.sqlname = self.output + "result.db"
@@ -32,17 +32,25 @@ class sqlite_join():
 
 
     def check_table(self):
+
         pass
 
     def table_list(self, db):
         try:
             dbname = db
             conn = sqlite3.connect(dbname)
+            conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             # DB 내에서 테이블의 목록을 전부 가져온다.
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
             self.table_lists = cursor.fetchall()
-            print self.table_lists
+            # 각각 테이블에서 필드명을 가져온다.
+            for table in self.table_lists:
+                cursor.execute("SELECT * FROM " + table[0]) # ('table',) 형태의 튜플로 되어 있기 때문에 table[0]
+                self.colume = cursor.fetchone()
+                if not self.colume:
+                    # 행이 하나도 없을 경우에는 해당 테이블의 colume을 읽어오지 못하니...
+                    continue
 
         except sqlite3.Error as e:
             if self.con:
@@ -65,8 +73,4 @@ if __name__ == "__main__":
     db_join = sqlite_join(args.path, args.output)
     db_join.set_sqlite()
     db_join.join_operation()
-
-
-
-
 
