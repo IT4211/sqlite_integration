@@ -8,6 +8,7 @@ import _sqlite_join
 import sqlite3
 import os
 import glob
+import hashlib
 
 
 class sqlite_join():
@@ -43,6 +44,61 @@ class sqlite_join():
                 if self.conn:
                     self.conn.close()
 
+        for db in self.listOfDBFiles:
+            f = open(db, "rb")
+            db_data = f.read()
+            f.close()
+            try:
+                self.dbname = db
+                self.conn = sqlite3.connect(db)
+                self.conn.text_factory = str
+                self.metatable(db_data)
+            finally:
+                if self.conn:
+                    self.conn.close()
+
+    def metatable(self, db):
+        db_name = os.path.splitext(self.dbname.split('\\')[-1])[0]
+        table_lists = []
+        hash = hashlib.sha1()
+        hash.update(db)
+        db_hash = hash.hexdigest()
+        try:
+            cursor = self.conn.cursor()
+            # DB 내에서 테이블의 목록을 전부 가져온다.
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            table_lists += list(map(lambda x: x[0], cursor.fetchall()))
+
+            # 테이블 목록 중 sqlite 테이블도 포함되어 있으면 이를 제외해준다.
+            sqlt_list = []
+            for table in table_lists:
+                if 'sqlite' in table:
+                    sqlt_list.append(table_lists.index(table))
+            for i in sqlt_list:
+                table_lists.pop(i)
+
+            sql = "CREATE TABLE IF NOT EXISTS meta_table(" \
+                  "db_name text, " \
+                  "table_name text, " \
+                  "table_rec_count integer, " \
+                  "db_hash_SHA1 text)"
+            self.con.execute(sql)
+
+            for table in table_lists:
+                count_sql = "SELECT Count(*) FROM %s" % table
+                cursor.execute(count_sql)
+                count = cursor.fetchall()[0]
+
+                self.con.execute("INSERT INTO meta_table(db_name, table_name, table_rec_count, db_hash_SHA1) VALUES(?,?,?,?)", (db_name, table, count[0], str(db_hash)))
+            self.con.commit()
+
+        except sqlite3.Error as e:
+            self.debug("metatable_except", e)
+        finally:
+            if cursor:
+                cursor.close()
+        return
+
     def check_table(self):
         try:
             cursor = self.con.cursor() # base DB의 정보를 가져와서 비교를 해야 하므로!
@@ -51,7 +107,6 @@ class sqlite_join():
 
             same = list(set(baseDBTables) & set(self.table_lists)) # 테이블 명이 같은 목록
             different = list(set(self.table_lists) - set(baseDBTables))  # 테이블 명이 다른 목록
-            self.debug("different", different)
 
             # 같은 것들은 테이블 스키마가 동일한 지 검증해야 하고, 다른 것들은 해당 테이블을 base table에 추가
             # 테이블 명이 동일한 경우
@@ -85,11 +140,9 @@ class sqlite_join():
                 for e in self.table_info[table]:
                     src_dict.update(e)
 
-                self.debug("base_dict", base_dict)
-                self.debug("src_dict", src_dict)
                 self.match_flag = True
                 for k in base_dict.keys(): # 필드의 데이터 타입도 동일한지 검사
-                    self.debug("test", k)
+
                     if base_dict[k] != src_dict[k]:
                         self.rename_table(table)
                         self.match_flag = False
@@ -102,7 +155,6 @@ class sqlite_join():
                 self.rename_table(table)
 
     def add_record(self, table):
-        self.debug("add", "hello?")
         src = self.conn.execute('SELECT * FROM %s' % table)
         fetchdata = src.fetchall()
         if len(fetchdata) == 0: # 추가해야 되는데, 추가할 게 없다면?
@@ -118,17 +170,15 @@ class sqlite_join():
                 self.debug("add_except", e)
         self.con.commit()
 
-
     def rename_table(self, table):
         dbname = os.path.splitext(self.dbname.split('\\')[-1])[0]
         tablename = dbname.replace('.', '') + '_' + table
         src = self.conn.execute('SELECT * FROM %s' % table)
         fetchdata = src.fetchall()
         if len(fetchdata) == 0:
-            self.debug("rename_null_table", tablename)
             sch = tuple([k.keys()[0] + ' ' + str(k.values()[0]) for k in self.table_info[table]])
             sql = 'CREATE TABLE %s(%s)' % (tablename, ','.join(sch))
-            self.debug("rename_sql", sql)
+
             try:
                 self.con.execute(sql)  # 대소문자가 다른 동일한 이름의 테이블이 존재할 경우 진행을 멈춤 ;;
             except sqlite3.Error as e:
@@ -140,7 +190,7 @@ class sqlite_join():
                 sch = tuple([k.keys()[0] + ' ' + str(k.values()[0]) for k in self.table_info[table]])
                 cols = tuple([k.keys()[0] for k in self.table_info[table]])
                 sql = 'CREATE TABLE %s(%s)' % (tablename, ','.join(sch))
-                self.debug("rename_table", table)
+
                 self.con.execute(sql)
                 if len(cols) == 1:
                     ins = 'INSERT INTO %s (%s) VALUES (%s)' % (table, cols[0], ','.join(['?'] * len(cols)))
@@ -148,7 +198,6 @@ class sqlite_join():
                     ins = 'INSERT INTO %s %s VALUES (%s)' % (table, cols, ','.join(['?'] * len(cols)))
 
             self.con.execute(ins, row)
-            self.debug("rename", "test")
         self.con.commit()
 
     def base_list(self):
@@ -180,7 +229,6 @@ class sqlite_join():
                 sch = tuple([k.keys()[0] + ' ' + str(k.values()[0]) for k in self.table_info[table]])
                 sql = 'CREATE TABLE %s(%s)' % (table, ','.join(sch))
                 try:
-                    self.debug("copy_null_table", table)
                     self.con.execute(sql) # 대소문자가 다른 동일한 이름의 테이블이 존재할 경우 진행을 멈춤 ;;
                 except sqlite3.Error as e:
                     self.debug("copy_except", e)
@@ -191,7 +239,7 @@ class sqlite_join():
                     sch = tuple([k.keys()[0] + ' ' + str(k.values()[0]) for k in self.table_info[table]])
                     cols = tuple([k.keys()[0] for k in self.table_info[table]])
                     sql = 'CREATE TABLE %s(%s)' % (table, ','.join(sch))
-                    self.debug("copy_table", table)
+
                     self.con.execute(sql)
                     if len(cols) == 1:
                         ins = 'INSERT INTO %s (%s) VALUES (%s)' % (table, cols[0], ','.join(['?'] * len(cols)))
@@ -202,15 +250,12 @@ class sqlite_join():
                     self.con.execute(ins, row)
                 except sqlite3.Error as e:
                     self.debug("copy_except", e) # 컬럼이 하나인 경우
-                    self.debug("ins", ins)
 
             self.con.commit()
 
     def table_list(self):
         try:
             self.table_lists = []
-            #dbname = db
-            #self.conn = sqlite3.connect(dbname)
             cursor = self.conn.cursor()
             # DB 내에서 테이블의 목록을 전부 가져온다.
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
@@ -222,17 +267,10 @@ class sqlite_join():
                 self.table_info[table] = list(map(lambda x, y: {x[1]:y[2]}, result, result))
                 self.fieldnames[table] = list(map(lambda x: x.keys()[0], self.table_info[table]))
 
-                #이 내용은 gist에 올리고 따로 해당 repo의 wiki에 같이 정리해두기!
-                #cursor.execute("SELECT * FROM " + table)
-                #self.fieldnames[table] = list(map(lambda x: x[0],  cursor.description))
-                #self.table_data = cursor.fetchone()
-                #self.debug("table_data", self.table_data)
-                #self.debug("table", table)
-                #self.debug("fieldnames", self.fieldnames)
-
         except sqlite3.Error as e:
             if self.conn:
                 self.conn.rollback()
+            self.debug("table_list_except", e)
 
         finally:
             if cursor:
